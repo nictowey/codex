@@ -5,6 +5,7 @@ from typing import Dict, Iterable, List, Tuple
 
 import pandas as pd
 import streamlit as st
+import altair as alt
 
 from app.core.backtesting import run_backtests
 from app.core.metrics import (
@@ -33,16 +34,20 @@ THEME_PALETTES = {
         "container_bg": "rgba(14, 23, 43, 0.72)",
         "card_bg": "rgba(28, 37, 65, 0.88)",
         "accent": "#43d9ad",
+        "accent_soft": "rgba(67, 217, 173, 0.18)",
         "text_primary": "#f5f7fa",
         "text_secondary": "#a7b0c4",
+        "chart_colors": ["#43d9ad", "#7fffd4", "#6f9ceb", "#b892ff", "#f5a5ff"],
     },
     "Nimbus Light": {
         "background": "linear-gradient(135deg, #f8fafc 0%, #eef2ff 45%, #e0f2fe 100%)",
         "container_bg": "rgba(255, 255, 255, 0.85)",
         "card_bg": "rgba(246, 249, 255, 0.92)",
         "accent": "#2563eb",
+        "accent_soft": "rgba(37, 99, 235, 0.12)",
         "text_primary": "#0f172a",
         "text_secondary": "#475569",
+        "chart_colors": ["#2563eb", "#7dd3fc", "#a855f7", "#f472b6", "#fb923c"],
     },
 }
 
@@ -52,9 +57,14 @@ def apply_theme(theme_name: str) -> None:
     st.markdown(
         f"""
         <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body, .stApp {{
             background: {palette['background']} !important;
             color: {palette['text_primary']} !important;
+            font-family: 'Inter', sans-serif;
+        }}
+        .stMarkdown p, .stMarkdown li, .stMarkdown span {{
+            font-family: 'Inter', sans-serif !important;
         }}
         .hero-container {{
             background: {palette['container_bg']};
@@ -80,10 +90,11 @@ def apply_theme(theme_name: str) -> None:
             gap: 6px;
             padding: 6px 14px;
             border-radius: 999px;
-            background: rgba(255, 255, 255, 0.14);
-            color: {palette['text_primary']};
+            background: {palette['accent_soft']};
+            color: {palette['accent']};
             font-size: 0.85rem;
             margin-right: 10px;
+            font-weight: 600;
         }}
         .metric-card {{
             background: {palette['card_bg']};
@@ -161,11 +172,69 @@ def apply_theme(theme_name: str) -> None:
         .streamlit-expanderContent {{
             background: {palette['card_bg']};
             border-radius: 0 0 16px 16px;
+            border: 1px solid rgba(255,255,255,0.05);
         }}
         .stDataFrame {{
             background: {palette['card_bg']};
             border-radius: 18px;
             padding: 8px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }}
+        .highlight-chip {{
+            display: inline-flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 2px;
+            min-width: 160px;
+            padding: 12px 16px;
+            background: {palette['card_bg']};
+            border-radius: 16px;
+            border: 1px solid {palette['accent_soft']};
+            box-shadow: 0 18px 30px rgba(15, 23, 42, 0.25);
+            margin-right: 12px;
+        }}
+        .highlight-chip span:first-child {{
+            font-size: 0.75rem;
+            color: {palette['text_secondary']};
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }}
+        .highlight-chip span:last-child {{
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: {palette['text_primary']};
+        }}
+        .highlight-row {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin: 6px 0 24px 0;
+        }}
+        .app-footer {{
+            margin-top: 54px;
+            padding: 18px 24px;
+            border-radius: 18px;
+            background: {palette['card_bg']};
+            border: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }}
+        .app-footer a {{
+            color: {palette['accent']};
+            font-weight: 600;
+        }}
+        .weight-chart-container {{
+            background: {palette['card_bg']};
+            padding: 16px 18px 12px 18px;
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 12px 28px rgba(3, 15, 35, 0.18);
+        }}
+        .altair-tooltip {{
+            font-family: 'Inter', sans-serif;
         }}
         </style>
         """,
@@ -178,11 +247,24 @@ def render_hero(theme_name: str) -> None:
     st.markdown(
         f"""
         <div class="hero-container">
-            <div class="pill-badge">🚀 3–5 year breakout intelligence</div>
+            <div class="pill-badge">🚀 Breakout intelligence · 3–5 year horizon</div>
             <h1 class="hero-title">Growth Breakout Stock Picker</h1>
             <p class="hero-subtitle">
                 Surface high-conviction U.S. equities that mirror the Celestica-style run: accelerating fundamentals, strategic catalysts, and balanced risk.
             </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_footer(theme_name: str) -> None:
+    palette = THEME_PALETTES.get(theme_name, THEME_PALETTES["Aurora Dark"])
+    st.markdown(
+        f"""
+        <div class="app-footer">
+            <span>⚡️ Continue refining your playbook — refresh data frequently to capture regime shifts.</span>
+            <span><a href="https://www.investopedia.com/terms/b/bottomsupanalysis.asp" target="_blank">Explore bottom-up research primer ↗</a></span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -246,6 +328,27 @@ def _render_scorecards(scores: List[ScoreBreakdown], theme_name: str) -> None:
         return
 
     palette = THEME_PALETTES.get(theme_name, THEME_PALETTES["Aurora Dark"])
+
+    top_highlights_html = ""
+    if not ranking_df.empty:
+        chips = []
+        top_three = ranking_df.head(3).itertuples(index=False)
+        for row in top_three:
+            chips.append(
+                f"""
+                <div class='highlight-chip'>
+                    <span>{row.Ticker}</span>
+                    <span>{row.Name}</span>
+                </div>
+                """
+            )
+        top_highlights_html = "".join(chips)
+
+    if top_highlights_html:
+        st.markdown(
+            f"<div class='highlight-row'>{top_highlights_html}</div>",
+            unsafe_allow_html=True,
+        )
 
     top_row = ranking_df.iloc[0]
     col1, col2, col3 = st.columns(3)
@@ -575,6 +678,9 @@ with st.sidebar:
     )
     st.session_state["weight_config"] = updated_weights
 
+    if updated_weights.total_weight() == 0:
+        st.warning("Assign at least one non-zero weight to generate rankings.")
+
     if st.button("Save weights as default", use_container_width=True):
         weight_store.save(updated_weights)
         st.success("Weights saved to local profile.")
@@ -615,7 +721,7 @@ else:
 
 
 scores: List[ScoreBreakdown] = []
-if indicators:
+if indicators and st.session_state["weight_config"].total_weight() > 0:
     scores = rank_companies(indicators, weight_config=st.session_state["weight_config"].normalized())
 
 
@@ -631,6 +737,30 @@ tab_rank, tab_drilldown, tab_backtest, tab_portfolio, tab_history = st.tabs(
 
 with tab_rank:
     _render_scorecards(scores, st.session_state["theme_choice"])
+    if scores:
+        with st.container():
+            st.markdown("### Weight distribution")
+            palette = THEME_PALETTES.get(st.session_state["theme_choice"], THEME_PALETTES["Aurora Dark"])
+            weights = st.session_state["weight_config"].normalized().to_dict()
+            weight_df = pd.DataFrame(
+                {"Factor": list(weights.keys()), "Weight": list(weights.values())}
+            )
+            if not weight_df.empty:
+                color_scale = alt.Scale(range=palette["chart_colors"])
+                chart = (
+                    alt.Chart(weight_df)
+                    .mark_arc(innerRadius=60, stroke="white")
+                    .encode(
+                        theta=alt.Theta(field="Weight", type="quantitative"),
+                        color=alt.Color(field="Factor", type="nominal", scale=color_scale),
+                        tooltip=["Factor", alt.Tooltip("Weight", format=".0%")],
+                    )
+                )
+                st.markdown("<div class='weight-chart-container'>", unsafe_allow_html=True)
+                st.altair_chart(chart, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+            else:
+                st.info("Adjust weights to visualize distribution.")
 
 with tab_drilldown:
     _render_factor_drilldown(indicator_map, price_payloads)
@@ -654,3 +784,5 @@ with tab_history:
             for snapshot in history
         )
         st.dataframe(df, use_container_width=True)
+
+render_footer(st.session_state["theme_choice"])

@@ -100,8 +100,11 @@ class WeightConfig:
     valuation: float = 0.18
     risk: float = 0.10
 
+    def total_weight(self) -> float:
+        return self.growth + self.quality + self.catalysts + self.valuation + self.risk
+
     def normalized(self) -> "WeightConfig":
-        total = self.growth + self.quality + self.catalysts + self.valuation + self.risk
+        total = self.total_weight()
         if total <= 0:
             # Fallback to evenly distributed weights when the user zeroes everything.
             equal_weight = 1 / 5
