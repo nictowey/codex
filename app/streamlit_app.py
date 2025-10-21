@@ -26,10 +26,167 @@ from app.data.sample_history import SAMPLE_PRICE_SERIES, load_fundamental_histor
 from app.data.tracking import RankingTracker
 
 st.set_page_config(page_title="Growth Breakout Stock Picker", layout="wide")
-st.title("🚀 Growth Breakout Stock Picker")
-st.caption(
-    "Identify long-horizon opportunities with Celestica-style breakout characteristics."
-)
+
+THEME_PALETTES = {
+    "Aurora Dark": {
+        "background": "linear-gradient(135deg, #0b132b 0%, #1c2541 45%, #3a506b 100%)",
+        "container_bg": "rgba(14, 23, 43, 0.72)",
+        "card_bg": "rgba(28, 37, 65, 0.88)",
+        "accent": "#43d9ad",
+        "text_primary": "#f5f7fa",
+        "text_secondary": "#a7b0c4",
+    },
+    "Nimbus Light": {
+        "background": "linear-gradient(135deg, #f8fafc 0%, #eef2ff 45%, #e0f2fe 100%)",
+        "container_bg": "rgba(255, 255, 255, 0.85)",
+        "card_bg": "rgba(246, 249, 255, 0.92)",
+        "accent": "#2563eb",
+        "text_primary": "#0f172a",
+        "text_secondary": "#475569",
+    },
+}
+
+
+def apply_theme(theme_name: str) -> None:
+    palette = THEME_PALETTES.get(theme_name, THEME_PALETTES["Aurora Dark"])
+    st.markdown(
+        f"""
+        <style>
+        body, .stApp {{
+            background: {palette['background']} !important;
+            color: {palette['text_primary']} !important;
+        }}
+        .hero-container {{
+            background: {palette['container_bg']};
+            border-radius: 24px;
+            padding: 28px 36px 32px 36px;
+            box-shadow: 0 25px 60px rgba(4, 12, 33, 0.35);
+            margin-bottom: 24px;
+        }}
+        .hero-title {{
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 6px;
+            color: {palette['text_primary']};
+        }}
+        .hero-subtitle {{
+            font-size: 1.05rem;
+            color: {palette['text_secondary']};
+            margin-bottom: 0;
+        }}
+        .pill-badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.14);
+            color: {palette['text_primary']};
+            font-size: 0.85rem;
+            margin-right: 10px;
+        }}
+        .metric-card {{
+            background: {palette['card_bg']};
+            border-radius: 18px;
+            padding: 16px 18px;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 12px 30px rgba(3, 15, 35, 0.2);
+            min-height: 120px;
+        }}
+        .metric-card h3 {{
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: {palette['text_secondary']};
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+        }}
+        .metric-card .metric-value {{
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: {palette['text_primary']};
+        }}
+        .metric-card .metric-note {{
+            font-size: 0.85rem;
+            color: {palette['text_secondary']};
+            margin-top: 6px;
+        }}
+        .stMetric label {{
+            color: {palette['text_secondary']} !important;
+        }}
+        .stMetric div[data-testid="stMetricValue"] {{
+            color: {palette['text_primary']} !important;
+        }}
+        .stTabs [data-baseweb="tab-list"] button {{
+            background: transparent;
+            padding: 14px 22px;
+            border-radius: 14px 14px 0 0;
+            font-weight: 600;
+            color: {palette['text_secondary']};
+        }}
+        .stTabs [aria-selected="true"] {{
+            background: {palette['card_bg']};
+            color: {palette['text_primary']};
+            box-shadow: inset 0 -3px 0 {palette['accent']};
+        }}
+        [data-testid="stSidebar"] {{
+            background: transparent;
+        }}
+        .stButton button {{
+            border-radius: 14px;
+            background: {palette['accent']};
+            color: white;
+            font-weight: 600;
+            padding: 0.6rem 1.4rem;
+            box-shadow: 0 15px 30px rgba(28, 214, 155, 0.25);
+            border: none;
+        }}
+        .stButton button:hover {{
+            filter: brightness(1.05);
+        }}
+        .stDownloadButton button {{
+            border-radius: 14px;
+            border: 1px solid rgba(255,255,255,0.15);
+            color: {palette['text_primary']};
+            background: transparent;
+            font-weight: 600;
+        }}
+        .stDownloadButton button:hover {{
+            background: rgba(255,255,255,0.08);
+        }}
+        .streamlit-expanderHeader {{
+            font-weight: 600;
+            color: {palette['text_primary']} !important;
+        }}
+        .streamlit-expanderContent {{
+            background: {palette['card_bg']};
+            border-radius: 0 0 16px 16px;
+        }}
+        .stDataFrame {{
+            background: {palette['card_bg']};
+            border-radius: 18px;
+            padding: 8px;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_hero(theme_name: str) -> None:
+    palette = THEME_PALETTES.get(theme_name, THEME_PALETTES["Aurora Dark"])
+    st.markdown(
+        f"""
+        <div class="hero-container">
+            <div class="pill-badge">🚀 3–5 year breakout intelligence</div>
+            <h1 class="hero-title">Growth Breakout Stock Picker</h1>
+            <p class="hero-subtitle">
+                Surface high-conviction U.S. equities that mirror the Celestica-style run: accelerating fundamentals, strategic catalysts, and balanced risk.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 @st.cache_resource(show_spinner=False)
@@ -47,9 +204,14 @@ default_weights = weight_store.load()
 
 if "weight_config" not in st.session_state:
     st.session_state["weight_config"] = default_weights
+if "theme_choice" not in st.session_state:
+    st.session_state["theme_choice"] = "Aurora Dark"
+
+apply_theme(st.session_state["theme_choice"])
+render_hero(st.session_state["theme_choice"])
 
 
-def _render_scorecards(scores: List[ScoreBreakdown]) -> None:
+def _render_scorecards(scores: List[ScoreBreakdown], theme_name: str) -> None:
     weight_mapping = (scores[0].weights or WeightConfig()).normalized().to_dict() if scores else {}
     ranking_df = pd.DataFrame([score.to_dict() for score in scores])
     if not ranking_df.empty:
@@ -83,15 +245,62 @@ def _render_scorecards(scores: List[ScoreBreakdown]) -> None:
         st.info("No companies to display yet. Configure a data source to begin.")
         return
 
-    st.dataframe(
-        ranking_df,
-        use_container_width=True,
-        column_config={"Composite": st.column_config.NumberColumn(format="%.3f")},
+    palette = THEME_PALETTES.get(theme_name, THEME_PALETTES["Aurora Dark"])
+
+    top_row = ranking_df.iloc[0]
+    col1, col2, col3 = st.columns(3)
+    col1.markdown(
+        f"""
+        <div class="metric-card">
+            <h3>Top composite</h3>
+            <div class="metric-value">{top_row['Composite']:.3f}</div>
+            <div class="metric-note">{top_row['Ticker']} · {top_row['Name']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    col2.markdown(
+        f"""
+        <div class="metric-card">
+            <h3>Average growth score</h3>
+            <div class="metric-value">{ranking_df['Growth'].mean():.3f}</div>
+            <div class="metric-note">Blend of revenue, backlog, and margin acceleration</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    col3.markdown(
+        f"""
+        <div class="metric-card">
+            <h3>Risk guardrail</h3>
+            <div class="metric-value">{ranking_df['Risk'].mean():.3f}</div>
+            <div class="metric-note">Lower is safer · Liquidity & drawdown filters</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
+    styled_df = (
+        ranking_df.style.format(
+            {
+                "Composite": "{:.3f}",
+                "Growth": "{:.3f}",
+                "Quality": "{:.3f}",
+                "Catalysts": "{:.3f}",
+                "Valuation": "{:.3f}",
+                "Risk": "{:.3f}",
+            }
+        )
+        .background_gradient(cmap="viridis", subset=["Composite"])
+        .set_properties(**{"font-weight": "600"}, subset=["Composite"])
+    )
+
+    st.dataframe(styled_df, use_container_width=True)
+
     st.markdown(
-        "**Active weights** — "
-        + ", ".join(f"{factor}: {weight_mapping[factor]:.0%}" for factor in weight_mapping)
+        f"<span style='font-weight:600;color:{palette['accent']}'>Active weights</span> — "
+        + ", ".join(f"{factor}: {weight_mapping[factor]:.0%}" for factor in weight_mapping),
+        unsafe_allow_html=True,
     )
 
     tracker = _get_tracker()
@@ -322,6 +531,14 @@ def _manual_csv_upload() -> List[CompanyIndicators]:
 
 
 with st.sidebar:
+    st.header("Appearance")
+    st.selectbox(
+        "Interface theme",
+        list(THEME_PALETTES.keys()),
+        key="theme_choice",
+        help="Toggle between Aurora Dark and Nimbus Light modes.",
+    )
+    st.markdown("---")
     st.header("Configuration")
     mode = st.radio(
         "Data source",
@@ -413,7 +630,7 @@ tab_rank, tab_drilldown, tab_backtest, tab_portfolio, tab_history = st.tabs(
 )
 
 with tab_rank:
-    _render_scorecards(scores)
+    _render_scorecards(scores, st.session_state["theme_choice"])
 
 with tab_drilldown:
     _render_factor_drilldown(indicator_map, price_payloads)
