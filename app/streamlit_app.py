@@ -167,6 +167,33 @@ def apply_theme(theme_name: str) -> None:
         .stDownloadButton button:hover {{
             background: rgba(255,255,255,0.08);
         }}
+        .stTextInput input,
+        .stTextArea textarea,
+        .stNumberInput input,
+        .stSelectbox div[data-baseweb="select"] > div,
+        .stSelectbox div[data-baseweb="select"] input {{
+            background: {palette['card_bg']};
+            color: {palette['text_primary']} !important;
+            border-radius: 12px;
+            border: 1px solid rgba(148, 163, 184, 0.35);
+        }}
+        .stTextInput input::placeholder,
+        .stTextArea textarea::placeholder {{
+            color: {palette['text_secondary']} !important;
+            opacity: 0.7;
+        }}
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] span,
+        [data-testid="stSidebar"] p {{
+            color: {palette['text_secondary']} !important;
+        }}
+        [data-testid="stSidebar"] .stTextInput input,
+        [data-testid="stSidebar"] .stTextArea textarea,
+        [data-testid="stSidebar"] .stNumberInput input,
+        [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div,
+        [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] input {{
+            color: {palette['text_primary']} !important;
+        }}
         .streamlit-expanderHeader {{
             font-weight: 600;
             color: {palette['text_primary']} !important;
@@ -331,14 +358,13 @@ def _render_scorecards(
 ) -> None:
     weight_mapping = (scores[0].weights or WeightConfig()).normalized().to_dict() if scores else {}
     ranking_df = pd.DataFrame([score.to_dict() for score in scores])
+    highlight_records: List[Dict[str, object]] = []
     if not ranking_df.empty:
         favorite_set = {ticker.upper() for ticker in favorites}
-        ranking_df["Favorite"] = ranking_df["ticker"].str.upper().isin(favorite_set)
         ranking_df = ranking_df[
             [
                 "ticker",
                 "name",
-                "Favorite",
                 "composite",
                 "growth",
                 "quality",
@@ -346,12 +372,16 @@ def _render_scorecards(
                 "valuation",
                 "risk",
             ]
-        ]
+        ].copy()
+        ranking_df["is_favorite"] = ranking_df["ticker"].str.upper().isin(favorite_set)
+        highlight_records = ranking_df.head(3)[
+            ["ticker", "name", "is_favorite"]
+        ].to_dict("records")
         ranking_df = ranking_df.rename(
             columns={
                 "ticker": "Ticker",
                 "name": "Name",
-                "Favorite": "★",
+                "is_favorite": "★",
                 "composite": "Composite",
                 "growth": "Growth",
                 "quality": "Quality",
@@ -369,17 +399,16 @@ def _render_scorecards(
     palette = THEME_PALETTES.get(theme_name, THEME_PALETTES["Aurora Dark"])
 
     top_highlights_html = ""
-    if not ranking_df.empty:
+    if highlight_records:
         chips = []
-        top_three = ranking_df.head(3).itertuples(index=False)
-        for row in top_three:
-            favorite_marker = "⭐" if row._3 else ""
+        for record in highlight_records:
+            favorite_marker = "⭐" if record.get("is_favorite") else ""
             chips.append(
                 f"""
-                <div class='highlight-chip'>
-                    <span>{row.Ticker}</span>
-                    <span>{favorite_marker} {row.Name}</span>
-                </div>
+                    <div class='highlight-chip'>
+                        <span>{record['ticker']}</span>
+                        <span>{favorite_marker}{' ' if favorite_marker else ''}{record['name']}</span>
+                    </div>
                 """
             )
         top_highlights_html = "".join(chips)
