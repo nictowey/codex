@@ -1,21 +1,22 @@
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.core.metrics import CompanyIndicators
 from app.core.pipeline import IndicatorPipeline, PipelineConfig
 from app.data.providers import (
     BaseProvider,
+    FailoverProvider,
     FMPProvider,
     FinnhubProvider,
     ProviderConfig,
     TwelveDataProvider,
 )
 
+from .credentials import resolve_api_key
 from .cache import JsonCache
 from .sample_provider import SampleProvider
 
@@ -204,32 +205,68 @@ class DataIngestionManager:
 def build_default_manager() -> DataIngestionManager:
     providers: Dict[str, BaseProvider] = {}
 
-    finnhub_key = os.getenv("FINNHUB_TOKEN")
+    finnhub_key = resolve_api_key("FINNHUB_TOKEN")
+    twelve_data_key = resolve_api_key("TWELVE_DATA_TOKEN")
+    fmp_key = resolve_api_key("FMP_TOKEN")
+
+    provider_candidates: Dict[str, BaseProvider] = {}
     if finnhub_key:
-        providers["primary"] = FinnhubProvider(
+        provider_candidates["Finnhub"] = FinnhubProvider(
             ProviderConfig(base_url="https://finnhub.io/api/v1", api_key=finnhub_key)
         )
-
-    twelve_data_key = os.getenv("TWELVE_DATA_TOKEN")
     if twelve_data_key:
-        providers.setdefault(
-            "primary",
-            TwelveDataProvider(
-                ProviderConfig(base_url="https://api.twelvedata.com", api_key=twelve_data_key)
-            ),
+        provider_candidates["TwelveData"] = TwelveDataProvider(
+            ProviderConfig(base_url="https://api.twelvedata.com", api_key=twelve_data_key)
+        )
+    if fmp_key:
+        provider_candidates["FMP"] = FMPProvider(
+            ProviderConfig(
+                base_url="https://financialmodelingprep.com/api/v3", api_key=fmp_key
+            )
         )
 
-    fmp_key = os.getenv("FMP_TOKEN")
-    if fmp_key:
-        providers.setdefault(
-            "themes",
-            FMPProvider(ProviderConfig(base_url="https://financialmodelingprep.com/api/v3", api_key=fmp_key)),
-        )
+    primary_chain: List[Tuple[str, BaseProvider]] = []
+    for label in ("Finnhub", "TwelveData", "FMP"):
+        provider = provider_candidates.get(label)
+        if provider is not None:
+            primary_chain.append((label, provider))
+
+    if primary_chain:
+        providers["primary"] = FailoverProvider(primary_chain, name="primary")
+
+    theme_chain: List[Tuple[str, BaseProvider]] = []
+    if "FMP" in provider_candidates:
+        theme_chain.append(("FMP", provider_candidates["FMP"]))
+    if "Finnhub" in provider_candidates:
+        theme_chain.append(("Finnhub", provider_candidates["Finnhub"]))
+
+    if theme_chain:
+        providers["themes"] = FailoverProvider(theme_chain, name="themes")
 
     if not providers:
         sample_provider = SampleProvider()
         providers = {"primary": sample_provider, "themes": sample_provider}
+        monitor = ProviderHealthMonitor(providers.keys())
+        pipeline = IndicatorPipeline(PipelineConfig(providers=providers), monitor=monitor)
+        return DataIngestionManager(pipeline, health_monitor=monitor)
 
-    monitor = ProviderHealthMonitor(providers.keys())
+    monitor_names: List[str] = []
+    primary_provider = providers.get("primary")
+    if primary_provider is not None:
+        monitor_names.append("primary")
+    theme_provider = providers.get("themes")
+    if theme_provider is not None:
+        monitor_names.append("themes")
+    if isinstance(primary_provider, FailoverProvider):
+        monitor_names.extend(f"primary:{label}" for label in primary_provider.provider_labels)
+    if isinstance(theme_provider, FailoverProvider):
+        monitor_names.extend(f"themes:{label}" for label in theme_provider.provider_labels)
+
+    monitor = ProviderHealthMonitor(list(dict.fromkeys(monitor_names)))
+    if isinstance(primary_provider, FailoverProvider):
+        primary_provider.attach_monitor(monitor)
+    if isinstance(theme_provider, FailoverProvider):
+        theme_provider.attach_monitor(monitor)
+
     pipeline = IndicatorPipeline(PipelineConfig(providers=providers), monitor=monitor)
     return DataIngestionManager(pipeline, health_monitor=monitor)

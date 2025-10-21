@@ -278,7 +278,7 @@ def _persist_preferences() -> None:
         theme=st.session_state.get("theme_choice", "Aurora Dark"),
         favorites=st.session_state.get("favorite_tickers", []),
         live_tickers=st.session_state.get("live_tickers", []),
-        data_mode=st.session_state.get("data_mode", "Sample data"),
+        data_mode=st.session_state.get("data_mode", "Live data (cached)"),
         auto_refresh=st.session_state.get("auto_refresh", False),
     )
     stored: UserPreferences = st.session_state.get("preferences", UserPreferences())
@@ -741,6 +741,12 @@ with st.sidebar:
         ),
         key="data_mode",
     )
+
+    if mode == "Live data (cached)":
+        st.caption(
+            "Live fetches use bundled free-tier API keys unless overridden by "
+            "FINNHUB_TOKEN, FMP_TOKEN, or TWELVE_DATA_TOKEN environment variables."
+        )
 
     st.markdown("""
         ### Methodology Overview

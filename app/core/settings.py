@@ -15,7 +15,7 @@ class UserPreferences:
     theme: str = "Aurora Dark"
     favorites: List[str] = field(default_factory=list)
     live_tickers: List[str] = field(default_factory=lambda: ["CLS", "NVST", "SMCI"])
-    data_mode: str = "Sample data"
+    data_mode: str = "Live data (cached)"
     auto_refresh: bool = False
 
     def to_dict(self) -> dict:
