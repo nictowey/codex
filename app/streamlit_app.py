@@ -362,9 +362,6 @@ def _render_scorecards(
     if not ranking_df.empty:
         favorite_set = {ticker.upper() for ticker in favorites}
         ranking_df["is_favorite"] = ranking_df["ticker"].str.upper().isin(favorite_set)
-        highlight_records = ranking_df.head(3)[
-            ["ticker", "name", "is_favorite"]
-        ].to_dict(orient="records")
         ranking_df = ranking_df[
             [
                 "ticker",
@@ -391,6 +388,14 @@ def _render_scorecards(
                 "risk": "Risk",
             }
         )
+        highlight_records = [
+            {
+                "ticker": row["Ticker"],
+                "name": row["Name"],
+                "is_favorite": bool(row["★"]),
+            }
+            for _, row in ranking_df.head(3).iterrows()
+        ]
 
     st.subheader("Ranked Candidates")
     if ranking_df.empty:
