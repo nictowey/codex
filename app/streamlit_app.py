@@ -358,14 +358,18 @@ def _render_scorecards(
 ) -> None:
     weight_mapping = (scores[0].weights or WeightConfig()).normalized().to_dict() if scores else {}
     ranking_df = pd.DataFrame([score.to_dict() for score in scores])
+    highlight_records: List[Dict[str, object]] = []
     if not ranking_df.empty:
         favorite_set = {ticker.upper() for ticker in favorites}
-        ranking_df["Favorite"] = ranking_df["ticker"].str.upper().isin(favorite_set)
+        ranking_df["is_favorite"] = ranking_df["ticker"].str.upper().isin(favorite_set)
+        highlight_records = ranking_df.head(3)[
+            ["ticker", "name", "is_favorite"]
+        ].to_dict(orient="records")
         ranking_df = ranking_df[
             [
                 "ticker",
                 "name",
-                "Favorite",
+                "is_favorite",
                 "composite",
                 "growth",
                 "quality",
@@ -378,7 +382,7 @@ def _render_scorecards(
             columns={
                 "ticker": "Ticker",
                 "name": "Name",
-                "Favorite": "★",
+                "is_favorite": "★",
                 "composite": "Composite",
                 "growth": "Growth",
                 "quality": "Quality",
@@ -396,16 +400,15 @@ def _render_scorecards(
     palette = THEME_PALETTES.get(theme_name, THEME_PALETTES["Aurora Dark"])
 
     top_highlights_html = ""
-    if not ranking_df.empty:
+    if highlight_records:
         chips = []
-        top_three_records = ranking_df.head(3).to_dict(orient="records")
-        for record in top_three_records:
-            favorite_marker = "⭐" if record.get("★") else ""
+        for record in highlight_records:
+            favorite_marker = "⭐" if record.get("is_favorite") else ""
             chips.append(
                 f"""
                     <div class='highlight-chip'>
-                        <span>{record['Ticker']}</span>
-                        <span>{favorite_marker} {record['Name']}</span>
+                        <span>{record['ticker']}</span>
+                        <span>{favorite_marker} {record['name']}</span>
                     </div>
                 """
             )
