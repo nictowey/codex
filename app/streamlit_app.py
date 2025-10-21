@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import io
+import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 import pandas as pd
 import streamlit as st
 import altair as alt
+
+# Ensure the project root is importable when launching the app from the repository's
+# ``app`` directory (e.g. ``streamlit run streamlit_app.py``).
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.core.backtesting import run_backtests
 from app.core.metrics import (
