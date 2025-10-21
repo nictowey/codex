@@ -167,6 +167,33 @@ def apply_theme(theme_name: str) -> None:
         .stDownloadButton button:hover {{
             background: rgba(255,255,255,0.08);
         }}
+        .stTextInput input,
+        .stTextArea textarea,
+        .stNumberInput input,
+        .stSelectbox div[data-baseweb="select"] > div,
+        .stSelectbox div[data-baseweb="select"] input {{
+            background: {palette['card_bg']};
+            color: {palette['text_primary']} !important;
+            border-radius: 12px;
+            border: 1px solid rgba(148, 163, 184, 0.35);
+        }}
+        .stTextInput input::placeholder,
+        .stTextArea textarea::placeholder {{
+            color: {palette['text_secondary']} !important;
+            opacity: 0.7;
+        }}
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] span,
+        [data-testid="stSidebar"] p {{
+            color: {palette['text_secondary']} !important;
+        }}
+        [data-testid="stSidebar"] .stTextInput input,
+        [data-testid="stSidebar"] .stTextArea textarea,
+        [data-testid="stSidebar"] .stNumberInput input,
+        [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div,
+        [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] input {{
+            color: {palette['text_primary']} !important;
+        }}
         .streamlit-expanderHeader {{
             font-weight: 600;
             color: {palette['text_primary']} !important;
@@ -371,15 +398,15 @@ def _render_scorecards(
     top_highlights_html = ""
     if not ranking_df.empty:
         chips = []
-        top_three = ranking_df.head(3).itertuples(index=False)
-        for row in top_three:
-            favorite_marker = "⭐" if row._3 else ""
+        top_three_records = ranking_df.head(3).to_dict(orient="records")
+        for record in top_three_records:
+            favorite_marker = "⭐" if record.get("★") else ""
             chips.append(
                 f"""
-                <div class='highlight-chip'>
-                    <span>{row.Ticker}</span>
-                    <span>{favorite_marker} {row.Name}</span>
-                </div>
+                    <div class='highlight-chip'>
+                        <span>{record['Ticker']}</span>
+                        <span>{favorite_marker} {record['Name']}</span>
+                    </div>
                 """
             )
         top_highlights_html = "".join(chips)
