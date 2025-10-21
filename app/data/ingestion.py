@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -20,6 +21,51 @@ from .sample_provider import SampleProvider
 
 
 @dataclass(slots=True)
+class ProviderHealthStatus:
+    name: str
+    last_success_at: Optional[float] = None
+    last_error: Optional[str] = None
+    last_error_at: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "last_success_at": self.last_success_at,
+            "last_error": self.last_error,
+            "last_error_at": self.last_error_at,
+        }
+
+
+class ProviderHealthMonitor:
+    """Track basic availability metrics for data providers."""
+
+    def __init__(self, provider_names: Iterable[str]) -> None:
+        self._statuses: Dict[str, ProviderHealthStatus] = {
+            name: ProviderHealthStatus(name=name) for name in provider_names
+        }
+
+    def record_success(self, name: str) -> None:
+        status = self._statuses.setdefault(name, ProviderHealthStatus(name=name))
+        status.last_success_at = time.time()
+        status.last_error = None
+        status.last_error_at = None
+
+    def record_failure(self, name: str, message: str) -> None:
+        status = self._statuses.setdefault(name, ProviderHealthStatus(name=name))
+        status.last_error = message
+        status.last_error_at = time.time()
+
+    def snapshot(self) -> List[ProviderHealthStatus]:
+        return list(self._statuses.values())
+
+
+@dataclass(slots=True)
+class AutoRefreshSummary:
+    refreshed: List[str] = field(default_factory=list)
+    skipped: List[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class IngestionResult:
     ticker: str
     indicators: CompanyIndicators
@@ -35,10 +81,13 @@ class DataIngestionManager:
         *,
         indicator_cache: Optional[JsonCache] = None,
         price_cache: Optional[JsonCache] = None,
+        health_monitor: Optional[ProviderHealthMonitor] = None,
     ) -> None:
         self.pipeline = pipeline
         self.indicator_cache = indicator_cache or JsonCache("indicators")
         self.price_cache = price_cache or JsonCache("prices")
+        provider_names = list(pipeline.config.providers.keys())
+        self.health_monitor = health_monitor or ProviderHealthMonitor(provider_names)
 
     def get_company(
         self, ticker: str, *, name: Optional[str] = None, force_refresh: bool = False
@@ -48,7 +97,12 @@ class DataIngestionManager:
         if cached_indicators is not None:
             indicators = CompanyIndicators.from_dict(cached_indicators)
         else:
-            indicators = self.pipeline.build_company(ticker, name=name)
+            try:
+                indicators = self.pipeline.build_company(ticker, name=name)
+                self.health_monitor.record_success("primary")
+            except Exception as exc:  # noqa: BLE001
+                self.health_monitor.record_failure("primary", str(exc))
+                raise
             self.indicator_cache.save(ticker, indicators.to_dict())
 
         cached_prices = None if force_refresh else self.price_cache.load(ticker)
@@ -59,7 +113,9 @@ class DataIngestionManager:
                 try:
                     response = provider.price_series(ticker, interval="1day", limit=365 * 3)
                     price_history = self._normalize_price_response(response)
+                    self.health_monitor.record_success("primary_prices")
                 except Exception:  # noqa: BLE001 - propagate silent fallback for UI
+                    self.health_monitor.record_failure("primary_prices", "price fetch failed")
                     price_history = None
             else:
                 price_history = None
@@ -75,6 +131,46 @@ class DataIngestionManager:
         for ticker in tickers:
             results.append(self.get_company(ticker, force_refresh=True))
         return results
+
+    def ensure_auto_refresh(
+        self,
+        tickers: Iterable[str],
+        *,
+        stale_after_seconds: float = 4 * 60 * 60,
+    ) -> AutoRefreshSummary:
+        summary = AutoRefreshSummary()
+        for ticker in tickers:
+            ticker = ticker.upper()
+            if not ticker:
+                continue
+            indicator_stale = self.indicator_cache.is_stale(ticker, max_age=stale_after_seconds)
+            price_stale = self.price_cache.is_stale(ticker, max_age=stale_after_seconds)
+            if indicator_stale or price_stale:
+                try:
+                    self.get_company(ticker, force_refresh=True)
+                    summary.refreshed.append(ticker)
+                except Exception:  # noqa: BLE001
+                    summary.skipped.append(ticker)
+            else:
+                summary.skipped.append(ticker)
+        return summary
+
+    def get_provider_health(self) -> List[ProviderHealthStatus]:
+        return self.health_monitor.snapshot()
+
+    def latest_close(self, ticker: str) -> Optional[float]:
+        ticker = ticker.upper()
+        payload = self.price_cache.load(ticker)
+        if payload is None:
+            return None
+        candles = payload.get("candles")
+        if not candles:
+            return None
+        last = candles[-1]
+        try:
+            return float(last.get("close"))
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _normalize_price_response(response: Dict[str, Any]) -> Dict[str, Any]:
@@ -134,5 +230,6 @@ def build_default_manager() -> DataIngestionManager:
         sample_provider = SampleProvider()
         providers = {"primary": sample_provider, "themes": sample_provider}
 
-    pipeline = IndicatorPipeline(PipelineConfig(providers=providers))
-    return DataIngestionManager(pipeline)
+    monitor = ProviderHealthMonitor(providers.keys())
+    pipeline = IndicatorPipeline(PipelineConfig(providers=providers), monitor=monitor)
+    return DataIngestionManager(pipeline, health_monitor=monitor)

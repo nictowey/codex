@@ -35,19 +35,47 @@ class JsonCache:
         sanitized = key.replace("/", "_").upper()
         return self.directory / f"{sanitized}.json"
 
-    def load(self, key: str) -> Optional[Dict[str, Any]]:
+    def _read_payload(self, key: str) -> Optional[Dict[str, Any]]:
         path = self._path_for(key)
         if not path.exists():
             return None
         try:
-            payload = json.loads(path.read_text())
+            return json.loads(path.read_text())
         except (json.JSONDecodeError, OSError):
+            return None
+
+    def load(self, key: str) -> Optional[Dict[str, Any]]:
+        payload = self._read_payload(key)
+        if payload is None:
             return None
 
         fetched_at = float(payload.get("_fetched_at", 0))
         if self.ttl_seconds and time.time() - fetched_at > self.ttl_seconds:
             return None
         return payload.get("data")
+
+    def get_record(self, key: str) -> Optional[CacheRecord]:
+        payload = self._read_payload(key)
+        if payload is None:
+            return None
+        fetched_at = float(payload.get("_fetched_at", 0))
+        if not fetched_at:
+            return None
+        return CacheRecord(key=key, fetched_at=fetched_at)
+
+    def last_fetched(self, key: str) -> Optional[float]:
+        record = self.get_record(key)
+        return record.fetched_at if record else None
+
+    def is_stale(self, key: str, *, max_age: Optional[float] = None) -> bool:
+        timestamp = self.last_fetched(key)
+        if timestamp is None:
+            return True
+        age = time.time() - timestamp
+        threshold = max_age if max_age is not None else self.ttl_seconds
+        if threshold == 0:
+            return False
+        return age > threshold
 
     def save(self, key: str, data: Dict[str, Any]) -> None:
         path = self._path_for(key)

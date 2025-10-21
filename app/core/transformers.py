@@ -31,7 +31,7 @@ class IndicatorTransformer:
 
     def build(self, source: MetricSource) -> CompanyIndicators:
         fundamentals = source.fundamentals
-        meta = source.metadata or {}
+        meta = dict(source.metadata or {})
 
         growth = GrowthMetrics(
             revenue_cagr_3y=self._safe_get(fundamentals, ["growth", "threeYearRevenueCagr"], default=0.0),
@@ -72,6 +72,14 @@ class IndicatorTransformer:
             drawdown_1y=self._safe_get(meta, ["drawdown1Y"], default=0.2),
         )
 
+        sector = meta.get("sector") or self._safe_get(fundamentals, ["profile", "sector"], default=None)
+        industry = meta.get("industry") or self._safe_get(fundamentals, ["profile", "industry"], default=None)
+
+        if sector:
+            meta.setdefault("sector", sector)
+        if industry:
+            meta.setdefault("industry", industry)
+
         return CompanyIndicators(
             ticker=self.ticker,
             name=self.name,
@@ -80,6 +88,9 @@ class IndicatorTransformer:
             catalysts=catalysts,
             valuation=valuation,
             risk=risk,
+            sector=sector,
+            industry=industry,
+            metadata=meta,
         )
 
     @staticmethod

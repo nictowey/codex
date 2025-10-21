@@ -24,6 +24,7 @@ SAMPLE_FUNDAMENTALS = {
         "valuation": {"pegRatio": 0.9, "fcfYield": 0.05},
         "size": {"marketCap": 4.2e9},
         "risk": {"beta": 1.1, "volatility3Y": 0.32},
+        "profile": {"sector": "Technology", "industry": "Electronic Components"},
         "themeAlignment": 0.85,
         "strategicInvestorScore": 0.3,
         "evToEbitdaVsPeers": -1.5,
@@ -46,6 +47,7 @@ SAMPLE_FUNDAMENTALS = {
         "valuation": {"pegRatio": 1.1, "fcfYield": 0.045},
         "size": {"marketCap": 6.5e9},
         "risk": {"beta": 1.0, "volatility3Y": 0.28},
+        "profile": {"sector": "Healthcare", "industry": "Medical Instruments"},
         "themeAlignment": 0.7,
         "strategicInvestorScore": 0.15,
         "evToEbitdaVsPeers": -0.8,
@@ -68,6 +70,7 @@ SAMPLE_FUNDAMENTALS = {
         "valuation": {"pegRatio": 1.4, "fcfYield": 0.03},
         "size": {"marketCap": 25e9},
         "risk": {"beta": 1.45, "volatility3Y": 0.55},
+        "profile": {"sector": "Technology", "industry": "Computer Hardware"},
         "themeAlignment": 0.95,
         "strategicInvestorScore": 0.2,
         "evToEbitdaVsPeers": 1.0,
@@ -84,6 +87,18 @@ def load_sample_companies() -> list[CompanyIndicators]:
 
     companies: list[CompanyIndicators] = []
     for ticker, fundamentals in SAMPLE_FUNDAMENTALS.items():
+        metadata = {
+            "sector": fundamentals.get("profile", {}).get("sector"),
+            "industry": fundamentals.get("profile", {}).get("industry"),
+            "themeAlignment": fundamentals["themeAlignment"],
+            "strategicInvestorScore": fundamentals["strategicInvestorScore"],
+            "evToEbitdaVsPeers": fundamentals["evToEbitdaVsPeers"],
+            "priceMomentum": fundamentals["priceMomentum"],
+            "consolidationScore": fundamentals["consolidationScore"],
+            "avgDollarVolume": fundamentals["avgDollarVolume"],
+            "drawdown1Y": fundamentals["drawdown1Y"],
+        }
+
         companies.append(
             CompanyIndicators(
                 ticker=ticker,
@@ -126,6 +141,9 @@ def load_sample_companies() -> list[CompanyIndicators]:
                     volatility_3y=fundamentals["risk"]["volatility3Y"],
                     drawdown_1y=fundamentals["drawdown1Y"],
                 ),
+                sector=metadata.get("sector"),
+                industry=metadata.get("industry"),
+                metadata=metadata,
             )
         )
     return companies

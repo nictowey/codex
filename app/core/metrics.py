@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Dict, Optional, Type
 
 
@@ -69,16 +69,24 @@ class CompanyIndicators:
     catalysts: CatalystMetrics
     valuation: ValuationMetrics
     risk: RiskMetrics
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    metadata: Dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, object]:
         """Serialize indicators so they can be cached on disk."""
 
-        return asdict(self)
+        payload = asdict(self)
+        # Drop empty metadata containers to keep caches compact.
+        if not payload.get("metadata"):
+            payload.pop("metadata", None)
+        return payload
 
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "CompanyIndicators":
         """Recreate a :class:`CompanyIndicators` instance from cached data."""
 
+        metadata = payload.get("metadata") or {}
         return cls(
             ticker=str(payload["ticker"]),
             name=str(payload["name"]),
@@ -87,6 +95,9 @@ class CompanyIndicators:
             catalysts=CatalystMetrics(**payload["catalysts"]),
             valuation=ValuationMetrics(**payload["valuation"]),
             risk=RiskMetrics(**payload["risk"]),
+            sector=payload.get("sector"),
+            industry=payload.get("industry"),
+            metadata=dict(metadata),
         )
 
 

@@ -3,9 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional
 
+from typing import TYPE_CHECKING
+
 from app.data.providers import BaseProvider
 from .metrics import CompanyIndicators
 from .transformers import IndicatorTransformer, MetricSource
+
+if TYPE_CHECKING:
+    from app.data.ingestion import ProviderHealthMonitor
 
 
 @dataclass(slots=True)
@@ -16,8 +21,9 @@ class PipelineConfig:
 class IndicatorPipeline:
     """High-level pipeline for fetching and transforming company data."""
 
-    def __init__(self, config: PipelineConfig) -> None:
+    def __init__(self, config: PipelineConfig, *, monitor: Optional["ProviderHealthMonitor"] = None) -> None:
         self.config = config
+        self.monitor = monitor
 
     def build_company(self, ticker: str, *, name: Optional[str] = None) -> CompanyIndicators:
         provider = self.config.providers["primary"]
@@ -40,11 +46,20 @@ class IndicatorPipeline:
         metadata: Dict[str, float] = {}
         theme_provider = self.config.providers.get("themes")
         if theme_provider is not None:
-            response = theme_provider.fundamentals(ticker)
-            metadata.update(
-                {
-                    "themeAlignment": response.get("themeAlignment", 0.0),
-                    "strategicInvestorScore": response.get("strategicInvestorScore"),
-                }
-            )
+            try:
+                response = theme_provider.fundamentals(ticker)
+            except Exception as exc:  # noqa: BLE001
+                if self.monitor is not None:
+                    self.monitor.record_failure("themes", str(exc))
+            else:
+                metadata.update(
+                    {
+                        "themeAlignment": response.get("themeAlignment", 0.0),
+                        "strategicInvestorScore": response.get("strategicInvestorScore"),
+                        "sector": response.get("sector") or response.get("profile", {}).get("sector"),
+                        "industry": response.get("industry") or response.get("profile", {}).get("industry"),
+                    }
+                )
+                if self.monitor is not None:
+                    self.monitor.record_success("themes")
         return metadata

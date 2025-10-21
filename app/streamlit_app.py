@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from datetime import datetime
 from typing import Dict, Iterable, List, Tuple
 
 import pandas as pd
@@ -20,7 +21,8 @@ from app.core.metrics import (
 )
 from app.core.portfolio import build_portfolio_plan
 from app.core.scoring_engine import rank_companies
-from app.core.settings import WeightSettingsStore
+from app.core.settings import UserPreferences, UserPreferencesStore, WeightSettingsStore
+from app.core.tuning import recommend_weights
 from app.data.ingestion import DataIngestionManager, build_default_manager
 from app.data.sample_data import load_sample_companies
 from app.data.sample_history import SAMPLE_PRICE_SERIES, load_fundamental_history
@@ -271,6 +273,20 @@ def render_footer(theme_name: str) -> None:
     )
 
 
+def _persist_preferences() -> None:
+    current = UserPreferences(
+        theme=st.session_state.get("theme_choice", "Aurora Dark"),
+        favorites=st.session_state.get("favorite_tickers", []),
+        live_tickers=st.session_state.get("live_tickers", []),
+        data_mode=st.session_state.get("data_mode", "Sample data"),
+        auto_refresh=st.session_state.get("auto_refresh", False),
+    )
+    stored: UserPreferences = st.session_state.get("preferences", UserPreferences())
+    if current != stored:
+        preferences_store.save(current)
+        st.session_state["preferences"] = current
+
+
 @st.cache_resource(show_spinner=False)
 def _get_manager() -> DataIngestionManager:
     return build_default_manager()
@@ -282,25 +298,47 @@ def _get_tracker() -> RankingTracker:
 
 
 weight_store = WeightSettingsStore()
+preferences_store = UserPreferencesStore()
+
 default_weights = weight_store.load()
+stored_preferences = preferences_store.load()
 
 if "weight_config" not in st.session_state:
     st.session_state["weight_config"] = default_weights
-if "theme_choice" not in st.session_state:
-    st.session_state["theme_choice"] = "Aurora Dark"
+if "preferences" not in st.session_state:
+    st.session_state["preferences"] = stored_preferences
+
+preferences: UserPreferences = st.session_state["preferences"]
+
+st.session_state.setdefault("theme_choice", preferences.theme)
+st.session_state.setdefault("favorite_tickers", preferences.favorites)
+st.session_state.setdefault("live_tickers", preferences.live_tickers)
+st.session_state.setdefault("auto_refresh", preferences.auto_refresh)
+st.session_state.setdefault("data_mode", preferences.data_mode)
 
 apply_theme(st.session_state["theme_choice"])
 render_hero(st.session_state["theme_choice"])
 
 
-def _render_scorecards(scores: List[ScoreBreakdown], theme_name: str) -> None:
+manager = _get_manager()
+
+
+def _render_scorecards(
+    scores: List[ScoreBreakdown],
+    theme_name: str,
+    favorites: List[str],
+    price_payloads: Dict[str, Dict[str, object]],
+) -> None:
     weight_mapping = (scores[0].weights or WeightConfig()).normalized().to_dict() if scores else {}
     ranking_df = pd.DataFrame([score.to_dict() for score in scores])
     if not ranking_df.empty:
+        favorite_set = {ticker.upper() for ticker in favorites}
+        ranking_df["Favorite"] = ranking_df["ticker"].str.upper().isin(favorite_set)
         ranking_df = ranking_df[
             [
                 "ticker",
                 "name",
+                "Favorite",
                 "composite",
                 "growth",
                 "quality",
@@ -313,6 +351,7 @@ def _render_scorecards(scores: List[ScoreBreakdown], theme_name: str) -> None:
             columns={
                 "ticker": "Ticker",
                 "name": "Name",
+                "Favorite": "★",
                 "composite": "Composite",
                 "growth": "Growth",
                 "quality": "Quality",
@@ -334,11 +373,12 @@ def _render_scorecards(scores: List[ScoreBreakdown], theme_name: str) -> None:
         chips = []
         top_three = ranking_df.head(3).itertuples(index=False)
         for row in top_three:
+            favorite_marker = "⭐" if row._3 else ""
             chips.append(
                 f"""
                 <div class='highlight-chip'>
                     <span>{row.Ticker}</span>
-                    <span>{row.Name}</span>
+                    <span>{favorite_marker} {row.Name}</span>
                 </div>
                 """
             )
@@ -384,7 +424,8 @@ def _render_scorecards(scores: List[ScoreBreakdown], theme_name: str) -> None:
     )
 
     styled_df = (
-        ranking_df.style.format(
+        ranking_df.assign(**{"★": ranking_df["★"].map({True: "★", False: ""})})
+        .style.format(
             {
                 "Composite": "{:.3f}",
                 "Growth": "{:.3f}",
@@ -408,7 +449,7 @@ def _render_scorecards(scores: List[ScoreBreakdown], theme_name: str) -> None:
 
     tracker = _get_tracker()
     if st.button("Record snapshot", icon="🗂️"):
-        tracker.append(scores)
+        tracker.append(scores, price_lookup=price_payloads)
         st.success("Snapshot saved for historical tracking.")
 
     for score in scores:
@@ -461,12 +502,11 @@ def _render_factor_drilldown(
             st.info("Price history not cached yet. Run a refresh to populate.")
 
 
-def _render_backtests(price_payloads: Dict[str, Dict[str, object]]) -> None:
-    if not price_payloads:
+def _render_backtests(results) -> None:
+    if results is None:
         st.info("Fetch live data or use the sample dataset to run backtests.")
         return
-    results = run_backtests(price_payloads)
-    if not results:
+    if len(results) == 0:
         st.warning("No valid price history was available for backtesting.")
         return
 
@@ -518,8 +558,43 @@ def _render_portfolio(scores: List[ScoreBreakdown], indicator_map: Dict[str, Com
     )
     st.markdown(
         f"**Expected return proxy:** {plan.expected_return:.1%}  •  "
-        f"Volatility proxy: {plan.volatility_proxy:.2f}"
+        f"Volatility proxy: {plan.volatility_proxy:.2f}  •  "
+        f"Diversification index: {plan.diversification_index:.2f}"
     )
+    if plan.sector_allocations:
+        sector_df = pd.DataFrame(
+            {
+                "Sector": list(plan.sector_allocations.keys()),
+                "Weight": list(plan.sector_allocations.values()),
+            }
+        )
+        st.markdown("#### Sector exposures")
+        st.dataframe(
+            sector_df,
+            use_container_width=True,
+            column_config={"Weight": st.column_config.NumberColumn(format="%.1%")},
+        )
+
+    if plan.scenarios:
+        scenario_df = pd.DataFrame(
+            {
+                "Scenario": [scenario.name for scenario in plan.scenarios],
+                "Expected": [scenario.expected_return for scenario in plan.scenarios],
+                "Volatility": [scenario.volatility for scenario in plan.scenarios],
+                "5% VaR": [scenario.value_at_risk for scenario in plan.scenarios],
+                "Notes": ["; ".join(scenario.notes) for scenario in plan.scenarios],
+            }
+        )
+        st.markdown("#### Stress scenarios")
+        st.dataframe(
+            scenario_df,
+            use_container_width=True,
+            column_config={
+                "Expected": st.column_config.NumberColumn(format="%.1%"),
+                "Volatility": st.column_config.NumberColumn(format="%.1%"),
+                "5% VaR": st.column_config.NumberColumn(format="%.1%"),
+            },
+        )
 
 
 def _manual_csv_upload() -> List[CompanyIndicators]:
@@ -642,6 +717,20 @@ with st.sidebar:
         help="Toggle between Aurora Dark and Nimbus Light modes.",
     )
     st.markdown("---")
+    favorites_input = st.text_input(
+        "Favorite tickers",
+        value=", ".join(st.session_state.get("favorite_tickers", [])),
+        help="Use favorites to spotlight must-track names across runs.",
+    )
+    favorites = [item.strip().upper() for item in favorites_input.split(",") if item.strip()]
+    st.session_state["favorite_tickers"] = favorites
+
+    st.session_state["auto_refresh"] = st.toggle(
+        "Auto-refresh cache",
+        value=st.session_state.get("auto_refresh", False),
+        help="Automatically refresh cached indicators when data looks stale.",
+    )
+
     st.header("Configuration")
     mode = st.radio(
         "Data source",
@@ -650,6 +739,7 @@ with st.sidebar:
             "Live data (cached)",
             "Upload CSV",
         ),
+        key="data_mode",
     )
 
     st.markdown("""
@@ -686,7 +776,25 @@ with st.sidebar:
         st.success("Weights saved to local profile.")
 
 
-manager = _get_manager()
+    st.markdown("---")
+    st.header("Data health")
+    for status in manager.get_provider_health():
+        last_success = (
+            datetime.fromtimestamp(status.last_success_at).strftime("%b %d %H:%M")
+            if status.last_success_at
+            else "never"
+        )
+        health_msg = f"✅ Last success {last_success}"
+        if status.last_error:
+            last_error = (
+                datetime.fromtimestamp(status.last_error_at).strftime("%b %d %H:%M")
+                if status.last_error_at
+                else ""
+            )
+            health_msg = f"⚠️ {status.last_error} ({last_error})"
+        st.caption(f"**{status.name}** — {health_msg}")
+
+
 indicator_map: Dict[str, CompanyIndicators] = {}
 price_payloads: Dict[str, Dict[str, object]] = {}
 indicators: List[CompanyIndicators] = []
@@ -702,6 +810,13 @@ elif mode == "Live data (cached)":
     tickers = [ticker.strip().upper() for ticker in tickers_input.split(",") if ticker.strip()]
     st.session_state["live_tickers"] = tickers
     refresh = st.sidebar.button("Force refresh cache", use_container_width=True)
+    auto_summary = None
+    if tickers and st.session_state.get("auto_refresh"):
+        auto_summary = manager.ensure_auto_refresh(tickers)
+        if auto_summary.refreshed:
+            st.sidebar.success(
+                f"Auto-refreshed: {', '.join(auto_summary.refreshed)}", icon="🔄"
+            )
     if tickers:
         for ticker in tickers:
             try:
@@ -719,10 +834,15 @@ else:
     indicators = _manual_csv_upload()
     indicator_map = {item.ticker: item for item in indicators}
 
+_persist_preferences()
+
 
 scores: List[ScoreBreakdown] = []
 if indicators and st.session_state["weight_config"].total_weight() > 0:
     scores = rank_companies(indicators, weight_config=st.session_state["weight_config"].normalized())
+
+
+backtest_results = run_backtests(price_payloads) if price_payloads else None
 
 
 tab_rank, tab_drilldown, tab_backtest, tab_portfolio, tab_history = st.tabs(
@@ -736,7 +856,12 @@ tab_rank, tab_drilldown, tab_backtest, tab_portfolio, tab_history = st.tabs(
 )
 
 with tab_rank:
-    _render_scorecards(scores, st.session_state["theme_choice"])
+    _render_scorecards(
+        scores,
+        st.session_state["theme_choice"],
+        st.session_state.get("favorite_tickers", []),
+        price_payloads,
+    )
     if scores:
         with st.container():
             st.markdown("### Weight distribution")
@@ -756,33 +881,89 @@ with tab_rank:
                         tooltip=["Factor", alt.Tooltip("Weight", format=".0%")],
                     )
                 )
-                st.markdown("<div class='weight-chart-container'>", unsafe_allow_html=True)
-                st.altair_chart(chart, use_container_width=True)
-                st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("<div class='weight-chart-container'>", unsafe_allow_html=True)
+        st.altair_chart(chart, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        st.info("Adjust weights to visualize distribution.")
+
+    if scores and backtest_results:
+        if st.button("Recommend weights from backtests", icon="🧠"):
+            optimization = recommend_weights(scores, backtest_results)
+            if optimization is None:
+                st.warning("Need more overlapping performance data to tune weights.")
             else:
-                st.info("Adjust weights to visualize distribution.")
+                st.session_state["weight_config"] = optimization.recommended
+                st.success("Applied backtest-informed weights. Rankings will refresh.")
+                st.caption(
+                    " • ".join(
+                        f"{factor.title()}: {corr:.2f}" for factor, corr in optimization.factor_correlations.items()
+                    )
+                )
+                st.experimental_rerun()
 
 with tab_drilldown:
     _render_factor_drilldown(indicator_map, price_payloads)
 
 with tab_backtest:
-    _render_backtests(price_payloads)
+    _render_backtests(backtest_results)
 
 with tab_portfolio:
     _render_portfolio(scores, indicator_map)
 
 with tab_history:
-    history = _get_tracker().load_history()
+    tracker = _get_tracker()
+    history = tracker.load_history()
     if not history:
         st.info("Record at least one snapshot to view historical rankings.")
     else:
-        df = pd.DataFrame(
-            {
-                "Run": snapshot.created_at,
-                "Top tickers": ", ".join(entry["ticker"] for entry in snapshot.scores[:5]),
-            }
-            for snapshot in history
-        )
-        st.dataframe(df, use_container_width=True)
+        performances = tracker.build_performance(manager)
+        if not performances:
+            st.warning("Snapshots exist but no price history is available to score performance yet.")
+        else:
+            df = pd.DataFrame(
+                {
+                    "Run": item.run_timestamp,
+                    "Ticker": item.ticker,
+                    "Composite": item.composite,
+                    "Recorded price": item.recorded_price,
+                    "Latest price": item.latest_price,
+                    "Return since snapshot": item.return_since_capture,
+                    "Target met": "🎯" if item.target_met else "",
+                }
+                for item in performances
+            )
+            st.dataframe(
+                df,
+                use_container_width=True,
+                column_config={
+                    "Composite": st.column_config.NumberColumn(format="%.3f"),
+                    "Recorded price": st.column_config.NumberColumn(format="$%.2f"),
+                    "Latest price": st.column_config.NumberColumn(format="$%.2f"),
+                    "Return since snapshot": st.column_config.NumberColumn(format="%.1%"),
+                },
+            )
+
+            summary = (
+                df.assign(hit=df["Target met"] == "🎯")
+                .groupby("Run")
+                .agg(
+                    ideas=("Ticker", "count"),
+                    avg_return=("Return since snapshot", "mean"),
+                    hit_rate=("hit", "mean"),
+                )
+                .reset_index()
+            )
+            summary["hit_rate"] = summary["hit_rate"].fillna(0.0)
+            st.markdown("#### Snapshot summary")
+            st.dataframe(
+                summary,
+                use_container_width=True,
+                column_config={
+                    "ideas": st.column_config.NumberColumn(format="%d"),
+                    "avg_return": st.column_config.NumberColumn(format="%.1%"),
+                    "hit_rate": st.column_config.NumberColumn(format="%.1%"),
+                },
+            )
 
 render_footer(st.session_state["theme_choice"])
